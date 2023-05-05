@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
+	"github.com/streadway/amqp"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -47,6 +48,7 @@ func main() {
 	port := os.Getenv("PORT")
 
 	http.HandleFunc("/", handleConnections)
+	go handleRabbitMQ()
 
 	log.Println("Server started on :8080")
 	err = http.ListenAndServe(":"+port, nil)
@@ -171,10 +173,109 @@ func fetchStockData(stockCode string) (string, error) {
 }
 
 func fetchStockDataAndSend(roomID, stockCode string) {
-	_, err := fetchStockData(stockCode)
+	message, err := fetchStockData(stockCode)
 	if err != nil {
 		log.Printf("Error parsing CSV data: %v", err)
 		return
+	}
+	sendMessageToRabbitMQ(roomID, "StockBot", message)
+}
+
+func handleRabbitMQ() {
+	rabbitmqHost := os.Getenv("RABBITMQ_HOST")
+	rabbitmqUser := os.Getenv("RABBITMQ_USER")
+	rabbitmqPass := os.Getenv("RABBITMQ_PASSWORD")
+	rabbitmqPort := os.Getenv("RABBITMQ_PORT")
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitmqUser, rabbitmqPass, rabbitmqHost, rabbitmqPort))
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer conn.Close()
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("Failed to open a channel: %v", err)
+	}
+	defer ch.Close()
+
+	q, err := ch.QueueDeclare(
+		os.Getenv("RABBITMQ_QUEUE"),
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare a queue: %v", err)
+	}
+
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to register a consumer: %v", err)
+	}
+
+	for d := range msgs {
+		parts := strings.SplitN(string(d.Body), "|", 3)
+		if len(parts) == 3 {
+			roomID := parts[0]
+			lock.RLock()
+			chatRoom, ok := chatRooms[roomID]
+			lock.RUnlock()
+			if ok {
+				chatRoom.broadcast <- Message{Username: parts[1], Text: parts[2]}
+			}
+		}
+	}
+}
+
+func sendMessageToRabbitMQ(roomID, username, message string) {
+	rabbitmqHost := os.Getenv("RABBITMQ_HOST")
+	rabbitmqUser := os.Getenv("RABBITMQ_USER")
+	rabbitmqPass := os.Getenv("RABBITMQ_PASSWORD")
+	rabbitmqPort := os.Getenv("RABBITMQ_PORT")
+	conn, err := amqp.Dial(fmt.Sprintf("amqp://%s:%s@%s:%s/", rabbitmqUser, rabbitmqPass, rabbitmqHost, rabbitmqPort))
+	if err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
+	defer conn.Close()
+	ch, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("Failed to open a channel: %v", err)
+	}
+	defer ch.Close()
+
+	q, err := ch.QueueDeclare(
+		os.Getenv("RABBITMQ_QUEUE"),
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Fatalf("Failed to declare a queue: %v", err)
+	}
+
+	body := fmt.Sprintf("%s|%s|%s", roomID, username, message)
+	err = ch.Publish(
+		"",
+		q.Name,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "text/plain",
+			Body:        []byte(body),
+		})
+	if err != nil {
+		log.Fatalf("Failed to publish a message: %v", err)
 	}
 
 }
