@@ -16,6 +16,7 @@ This is a simple WebSocket chat server implemented in Golang. It allows multiple
 ## Requirements
 
 - Golang 1.17 or later
+- RabbitMQ (for message queue support)
 - React (front)
 ## Installation
 
@@ -40,12 +41,20 @@ Set the following environment variables in your system:
 # Server Configuration
 PORT=8080
 
+# RabbitMQ Configuration
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+RABBITMQ_VHOST=/
+RABBITMQ_QUEUE=stock_data
+
 # Stock API Configuration
 STOCK_API_BASE_URL=https://stooq.com/q/l/
 STOCK_API_PARAMS=?s=%s&f=sd2t2ohlcv&h&e=csv
 ```
 
-Replace the placeholder values with Stooq API URL, Port if needed.
+Replace the placeholder values with your RabbitMQ connection URL, Stooq API URL, Port if needed.
 
 
 4. Run the application:
